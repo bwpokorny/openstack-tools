@@ -7,6 +7,7 @@ from keystoneauth1 import exceptions
 from keystoneauth1 import loading
 from keystoneauth1 import session
 from novaclient import client as nova
+from urlparse import urljoin
 
 config = ConfigParser.ConfigParser()
 config.read('/etc/reconcile.conf')
@@ -21,10 +22,10 @@ def _get(url):
 
 class IpInfoCorrelator():
     nova_client = None
-    contrail_url = ''
-    contrail_vmis = '/virtual-machine-interfaces'
+    contrail_vmi_path = 'virtual-machine-interfaces'
 
     def __init__(self):
+        self.contrail_url = config.get('CONTRAIL', 'contrail_url')
         loader = loading.get_plugin_loader('password')
         auth = loader.load_from_options(
             auth_url=config.get('COMMON', 'os_auth_url'),
@@ -35,7 +36,6 @@ class IpInfoCorrelator():
             project_domain_name=config.get('COMMON', 'os_project_domain_name'))
 
         sess = session.Session(auth=auth)
-
         self.nova_client = nova.Client(
             '2',
             session=sess,
@@ -80,10 +80,10 @@ class IpInfoCorrelator():
                 else:
                     instance.floating_ips.append(content['floating-ip']['floating_ip_address'])
 
-    def get_ip_info(self):
+    def get_ip_info(self, instances=[]):
         instances = self.nova_client.servers.list(search_opts={'all_tenants': 1})
 
-        url = self.contrail_url + self.contrail_vmis
+        url = urljoin(self.contrail_url, self.contrail_vmi_path)
         resp, content = None, None
         try:
             resp, content = _get(url)
@@ -91,9 +91,10 @@ class IpInfoCorrelator():
             error_dict = {'error': str(e)}
             print("Contrail API failed to get VMIs: "
                   "Error: %(error)s" % error_dict)
+            return instances
         if 'status' not in resp or resp['status'] not in ['200']:
-            print("Got an error code from Contrail VMI API")
-            return None
+            print("Got an error code from Contrail VMIs API")
+            return instances
 
         vmis = content['virtual-machine-interfaces']
         vmis_dict = {}
@@ -108,7 +109,7 @@ class IpInfoCorrelator():
                       {'uuid': vmi['uuid'], 'error': error_dict})
                 continue
             if 'status' not in resp or resp['status'] not in ['200']:
-                print("Got an error code from Contrail for VMI %(uuid)s" %
+                print("Got error code from Contrail for VMI %(uuid)s" %
                       vmi['uuid'])
             else:
                 vmi_details = content['virtual-machine-interface']
